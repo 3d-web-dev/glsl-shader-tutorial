@@ -1,0 +1,17 @@
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #000;
+}
+
+canvas {
+  display: block;
+  margin: 0 auto;
+}
+
+select {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 24px;
+}

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CodePen - Fragment Shader Examples</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <shader-doodle>
+        <script id="shader" type="x-shader/x-fragment">
+           float random (in vec2 _st) {
+              //don't really get how it works, just found through experimentation
+              return fract(dot(vec2(sin(mod(_st.x / cos(_st.y), 5.0) * 10000.0)), vec2(1.1)));
+          }
+
+          //gradient noise based on examples from The Book of Shaders
+          float noise (in vec2 st) {
+              vec2 i = floor(st);//location of tile
+              vec2 f = fract(st);//location of point in tile
+
+              // Four corners in 2D of a tile
+              float a = random(i);
+              float b = random(i + vec2(1.0, 0.0));
+              float c = random(i + vec2(0.0, 1.0));
+              float d = random(i + vec2(1.0, 1.0));
+
+              // Smooth Interpolation
+              vec2 u = smoothstep(0.0,1.0,f);
+              // Quintic Hermine Curve. (May have precision error side effects)
+              //u = (10. *f*f*f - 15.*f*f*f*f + 6.*f*f*f*f*f);
+
+              // Mix 4 corners percentages
+              //mix x1, x2, then mix those over y
+              return mix(
+                      mix(a,b,u.x),
+                      mix(c,d,u.x),
+                      u.y);
+          }
+
+          vec2 random2( vec2 p ) {
+              //just uses random, but with a small variation to prevent similarity
+              return vec2(random(p), random(p.yx + random(p)));
+          }
+
+          float fbm(in vec2 p) {
+            //Fractal Brownian Motion
+            float frequency = 1.0;//width of wave
+            float amplitude = 1.0;//height of wave
+            float compression = 4.0;//change in frequency
+            float gain = 0.5;//change in amplitude
+
+            //initial value (sized noise)
+            float v = amplitude * noise(p * frequency);
+            for (int o = 1; o < 6;o++) {
+              //add a noise to the already generated one
+              v += amplitude * (noise(p * frequency));
+
+              //change size and frequency to get a smaller version
+              frequency *= compression;
+              amplitude *= gain;
+            }
+            return v;
+          }
+
+          float fbmx(in vec2 p) {
+            //recursive Fractal Brownian Motion,
+            //done in a way that avoids recursion
+            float v = fbm(p);
+            for (int i = 1; i < 3; i++) {
+              v = fbm(p + v);
+            }
+            return v;
+          }
+
+          vec3 cell(vec2 st) {
+              vec2 i = floor(st);//tile location
+              vec2 f = fract(st);//position on the tile
+
+              float m_dist = 1000.0;//abitrary large num
+              vec2 m_point;
+
+              for (int x = -1;x <= 1;x++) {
+                  for (int y = -1;y <= 1;y++) {
+                      //cycles through the nearest neighbors and this tile like:
+                      //  a | b | c
+                      //  ----------
+                      //  d | e | f
+                      //  ----------
+                      //  g | h | i
+                      //to find the closest point and the distance to it
+                      //creates a cell sized on the exact middle between central points
+
+                      //find which neighbor is being cycled through
+                      vec2 neighbor = vec2(float(x), float(y));
+
+                      //determine a random point based of tile location
+                      vec2 point = random2(i + neighbor);
+
+                      //determine a random movement direction based on point location
+                      vec2 dir = random2(point) * sin(u_time / 2.0 + point.x);
+                      //and move in that location
+                      point += cos(u_time + point.y) * dir;
+
+                      //find how close this pixel is to the point being cycled through
+                      vec2 diff = neighbor + point - f;//difference between pnt + pxl
+                      float dis = length(diff);//distance to pxl
+                      if (dis < m_dist) {
+                          //if this is a new minimum distance, set it as the min
+                          m_dist = dis;
+                          m_point = point;
+                      }
+                  }
+              }
+              //return the point and the distance (a bit arbitrary, but useful)
+              return vec3(m_point,m_dist);
+          }
+
+          vec3 rgb(float r, float g, float b) {
+              //changes css rgb to glsl color (maps from 0-256 to 0-1)
+              //for convenience
+              vec3 clr = vec3(r,g,b);
+              return clr/256.0;
+          }
+
+          void main() {
+              #define SCALE 8.0
+              #define LAVA
+              //get scaled coordinates of pixel (larger scale = zoomed out)
+              vec2 st = gl_FragCoord.xy/u_resolution.xy*SCALE;
+
+              #ifdef WATER
+              //water
+              st -= noise(st.xy * 1.5 - (u_time - 1.5) * 1.0) /3.0;//wave warp
+              st += fbm(st.xy * 2.0 + u_time * 1.0) /10.0;//flow
+              #endif
+              #ifdef LAVA
+              //lava
+              st -= noise(st.xy * 1.5 - (u_time - 1.5) * 0.5) /2.0;//slower warp
+              #endif
+
+              vec3 blue = rgb(18., 171., 232.);
+              vec3 red = rgb(245.,41.,0.);
+              vec3 orange = rgb(255.,210.,77.);
+              vec3 white = vec3(1.0);
+              vec3 color;
+
+              vec3 shine = cell(-st);
+              vec3 overshine = cell(vec2(st));//for more detail
+              float tone = shine.z;
+              tone *= overshine.z * 2.5;
+
+              #ifdef WATER
+              //water
+              color = mix(blue,white, (tone)/2.0);
+              #endif
+              #ifdef LAVA
+              //lava
+              color = mix(red,orange, (tone + fbm(st) / 2.0)/2.0);
+              #endif
+
+              gl_FragColor = vec4(color,1.);
+          }
+        </script>
+      </shader-doodle>
+      <shader-doodle>
+        <script id="shader" type="x-shader/x-fragment">
+          /**************************
+                Water and lava shader by Griffith Thomas
+                (@KiranWells - Codepen),
+                based off of tutorials by The Book of Shaders
+                (thebookofshaders.com-simple shader tutorial. Highly recommended)
+                with slightly edited functions.
+                If you use my code please attribute it to me.
+          **************************/
+
+          float random (in vec2 _st) {
+              //don't really get how it works, just found through experimentation
+              return fract(dot(vec2(sin(mod(_st.x / cos(_st.y), 5.0) * 10000.0)), vec2(1.1)));
+          }
+
+          //gradient noise based on examples from The Book of Shaders
+          float noise (in vec2 st) {
+              vec2 i = floor(st);//location of tile
+              vec2 f = fract(st);//location of point in tile
+
+              // Four corners in 2D of a tile
+              float a = random(i);
+              float b = random(i + vec2(1.0, 0.0));
+              float c = random(i + vec2(0.0, 1.0));
+              float d = random(i + vec2(1.0, 1.0));
+
+              // Smooth Interpolation
+              vec2 u = smoothstep(0.0,1.0,f);
+              // Quintic Hermine Curve. (May have precision error side effects)
+              //u = (10. *f*f*f - 15.*f*f*f*f + 6.*f*f*f*f*f);
+
+              // Mix 4 corners percentages
+              //mix x1, x2, then mix those over y
+              return mix(
+                      mix(a,b,u.x),
+                      mix(c,d,u.x),
+                      u.y);
+          }
+
+          vec2 random2( vec2 p ) {
+              //just uses random, but with a small variation to prevent similarity
+              return vec2(random(p), random(p.yx + random(p)));
+          }
+
+          float fbm(in vec2 p) {
+            //Fractal Brownian Motion
+            float frequency = 1.0;//width of wave
+            float amplitude = 1.0;//height of wave
+            float compression = 4.0;//change in frequency
+            float gain = 0.5;//change in amplitude
+
+            //initial value (sized noise)
+            float v = amplitude * noise(p * frequency);
+            for (int o = 1; o < 6;o++) {
+              //add a noise to the already generated one
+              v += amplitude * (noise(p * frequency));
+
+              //change size and frequency to get a smaller version
+              frequency *= compression;
+              amplitude *= gain;
+            }
+            return v;
+          }
+
+          float fbmx(in vec2 p) {
+            //recursive Fractal Brownian Motion,
+            //done in a way that avoids recursion
+            float v = fbm(p);
+            for (int i = 1; i < 3; i++) {
+              v = fbm(p + v);
+            }
+            return v;
+          }
+
+          vec3 cell(vec2 st) {
+              vec2 i = floor(st);//tile location
+              vec2 f = fract(st);//position on the tile
+
+              float m_dist = 1000.0;//abitrary large num
+              vec2 m_point;
+
+              for (int x = -1;x <= 1;x++) {
+                  for (int y = -1;y <= 1;y++) {
+                      //cycles through the nearest neighbors and this tile like:
+                      //  a | b | c
+                      //  ----------
+                      //  d | e | f
+                      //  ----------
+                      //  g | h | i
+                      //to find the closest point and the distance to it
+                      //creates a cell sized on the exact middle between central points
+
+                      //find which neighbor is being cycled through
+                      vec2 neighbor = vec2(float(x), float(y));
+
+                      //determine a random point based of tile location
+                      vec2 point = random2(i + neighbor);
+
+                      //determine a random movement direction based on point location
+                      vec2 dir = random2(point) * sin(u_time / 2.0 + point.x);
+                      //and move in that location
+                      point += cos(u_time + point.y) * dir;
+
+                      //find how close this pixel is to the point being cycled through
+                      vec2 diff = neighbor + point - f;//difference between pnt + pxl
+                      float dis = length(diff);//distance to pxl
+                      if (dis < m_dist) {
+                          //if this is a new minimum distance, set it as the min
+                          m_dist = dis;
+                          m_point = point;
+                      }
+                  }
+              }
+              //return the point and the distance (a bit arbitrary, but useful)
+              return vec3(m_point,m_dist);
+          }
+
+          vec3 rgb(float r, float g, float b) {
+              //changes css rgb to glsl color (maps from 0-256 to 0-1)
+              //for convenience
+              vec3 clr = vec3(r,g,b);
+              return clr/256.0;
+          }
+
+          void main() {
+              #define SCALE 8.0
+
+              //controls which type is displayed
+              #define WATER
+              //get scaled coordinates of pixel (larger scale = zoomed out)
+              vec2 st = gl_FragCoord.xy/u_resolution.xy*SCALE;
+
+              #ifdef WATER
+              //water
+              st -= noise(st.xy * 1.5 - (u_time - 1.5) * 2.0) /3.0;//wave warp
+              st += fbm(st.xy * 2.0 + u_time * 2.0) /10.0;//flow
+              #endif
+              #ifdef LAVA
+              //lava
+              st -= noise(st.xy * 1.5 - (u_time - 1.5) * 0.5) /2.0;//slower warp
+              #endif
+
+              //try different colors - use an rgb color picker
+              vec3 blue = rgb(18., 171., 232.);
+              vec3 red = rgb(245.,41.,0.);
+              vec3 orange = rgb(255.,210.,77.);
+              vec3 white = vec3(1.0);
+              vec3 color;
+
+              vec3 shine = cell(-st);
+              vec3 overshine = cell(vec2(st));//for more detail
+              float tone = shine.z;
+              tone *= overshine.z * 2.5;
+
+              #ifdef WATER
+              //water
+              color = mix(blue,white, (tone)/2.0);
+              #endif
+              #ifdef LAVA
+              //lava
+              color = mix(red,orange, (tone + fbm(st) / 2.0)/2.0);
+              #endif
+
+              gl_FragColor = vec4(color,1.);
+          }
+        </script>
+      </shader-doodle>
+      <shader-doodle>
+        <script type="x-shader/x-fragment">
+
+                precision mediump float;
+
+            float random (in vec2 _st) {
+              return fract(dot(sin(_st + _st.y), vec2(dot(_st.y - 2.0 * cos(_st.x), 3.0) * 1.89,_st.x * 6.56)) * 1.0);
+          }
+
+          mat2 rotate2d(float _angle){
+              return mat2(cos(_angle),-sin(_angle),
+                          sin(_angle),cos(_angle));
+          }
+
+          vec2 random2( vec2 p ) {
+              return vec2(random(p), random(p.yx));
+          }
+
+          vec2 rotate2d(vec2 st,float angle) {
+             mat2 rot = mat2(cos(angle), -sin(angle),
+                             sin(angle),cos(angle));
+             return st * angle;// * rot;
+          }
+
+          // 2D Noise based on Morgan McGuire @morgan3d
+          // https://www.shadertoy.com/view/4dS3Wd
+          float noise (in vec2 st) {
+              vec2 i = floor(st);
+              vec2 f = fract(st);
+
+              // Four corners in 2D of a tile
+              float a = random(i);//dot(random2(i), f);
+              float b = random(i + vec2(1.0, 0.0));//dot(random2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+              float c = random(i + vec2(0.0, 1.0));//dot(random2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+              float d = random(i + vec2(1.0, 1.0));//dot(random2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+
+              // Smooth Interpolation
+
+              // Quintic Hermine Curve.
+              vec2 u = smoothstep(0.0,1.0,f);
+              //u = (10. *f*f*f - 15.*f*f*f*f + 6.*f*f*f*f*f);
+
+              // Mix 4 corners percentages
+              return mix(
+                      mix(a,b,u.x),
+                      mix(c,d,u.x),
+                      u.y);
+          }
+
+          #define OCTAVES 6
+          float fbm(in vec2 p) {
+
+            float frequency = 1.0;
+            float amplitude = 1.0;
+            float compression = 2.0;
+            float gain = 0.5;
+
+            float v = amplitude * noise(p * frequency);
+            for (int o = 1; o < OCTAVES;o++) {
+              v += amplitude * (noise(p * frequency));
+              p = rotate2d(p, amplitude);
+              frequency *= compression;
+              amplitude *= gain;
+            }
+            return sin(v);
+          }
+
+          float fbmx(in vec2 p) {
+            float v = fbm(p);
+            for (int i = 1; i < 3; i++) {
+              v = fbm(p + v);
+            }
+            return v;
+          }
+
+          vec3 cell(vec2 st) {
+          vec2 i = floor(st);
+              vec2 f = fract(st);
+
+              float m_dist = 1000.0;
+              vec2 m_point;
+
+          for (int x = -1;x <= 1;x++) {
+                for (int y = -1;y <= 1;y++) {
+                  vec2 neighbor = vec2(float(x), float(y));
+                  vec2 point = random2(i + neighbor);
+                  vec2 dir = random2(point) * sin(u_time / 2.0 + point.x);
+                  point += cos(u_time + point.y) * dir;
+                  vec2 diff = neighbor + point - f;
+                  float dis = length(diff);
+                  if (dis < m_dist) {
+                    m_dist = dis;
+                    m_point = point;
+                  }
+                }
+              }
+              return vec3(m_point,m_dist);
+          }
+
+          vec2 r2p(vec2 st) {
+            return vec2(length(st), atan(st.x,st.y));
+          }
+
+              #define SEED -20.528 * sin(u_time / 10.0)
+              //a number from -20 to 20 is reccomended for the seed
+          float dots(float warp, float stretch, float twist) {
+            vec2 st = gl_FragCoord.xy/u_resolution.xy*10.0 + 10.0 + SEED;
+            st = rotate2d(st, twist);
+            st.y *= warp;
+            st.x *= stretch;
+            vec2 pnt = fract(st);
+            vec2 polar = r2p(pnt * 0.5 - 0.25);
+            return smoothstep(0.1, 0.19,polar.x);
+          }
+
+          void main() {
+              #define SCALE 10.0
+
+              vec2 st = gl_FragCoord.xy/u_resolution.xy*SCALE + 10.0 + SEED;
+              st *= u_resolution.x/u_resolution.y;
+              st = st - 0.5 * 2.0;
+
+              vec3 color;
+
+              vec3 lightBrown = vec3(0.7,0.5,0.3);
+              vec3 darkBrown = vec3(0.3,0.2,0.1);
+
+              vec2 grain = rotate2d(st, noise(vec2(st / 2.) / 2.));
+
+              color = mix(lightBrown, darkBrown, sin(fract(grain.x) * 4.));//vec3(sin(st.x * 3.));
+              color -= 0.50 - vec3(dots(random(vec2(st.x / 3.0)) / 1.0, 1.0, noise(vec2(grain)))/2.0);
+
+              gl_FragColor = vec4(color,1.);
+          }
+        </script>
+      </shader-doodle>
+    </main>
+    <script src="./main.js"></script>
+  </body>
+</html>
